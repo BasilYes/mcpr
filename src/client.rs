@@ -118,6 +118,30 @@ impl<T: Transport + Send + Sync> Client<T> {
         }
     }
 
+    /// List tools on a server
+    pub async fn list_tools<R: DeserializeOwned + Send + Sync>(&mut self) -> Result<R, MCPError> {
+        // Create tool call request
+        let tool_call_request =
+            JSONRPCRequest::new(self.next_request_id(), "tools/list".to_string(), None);
+
+        let message = JSONRPCMessage::Request(tool_call_request);
+        self.transport.send(&message).await?;
+
+        // Wait for response with timeout if set
+        let response: JSONRPCMessage = self.receive_with_timeout().await?;
+
+        match response {
+            JSONRPCMessage::Response(resp) => {
+                // Parse the result
+                serde_json::from_value(resp.result).map_err(MCPError::Serialization)
+            }
+            JSONRPCMessage::Error(err) => {
+                Err(MCPError::Protocol(format!("Tool list failed: {:?}", err)))
+            }
+            _ => Err(MCPError::Protocol("Unexpected response type".to_string())),
+        }
+    }
+
     /// Call a tool on the server
     pub async fn call_tool<P: Serialize + Send + Sync, R: DeserializeOwned + Send + Sync>(
         &mut self,
@@ -127,10 +151,10 @@ impl<T: Transport + Send + Sync> Client<T> {
         // Create tool call request
         let tool_call_request = JSONRPCRequest::new(
             self.next_request_id(),
-            "tool_call".to_string(),
+            "tools/call".to_string(),
             Some(serde_json::json!({
                 "name": tool_name,
-                "parameters": serde_json::to_value(params)?
+                "arguments": serde_json::to_value(params)?
             })),
         );
 
@@ -142,14 +166,8 @@ impl<T: Transport + Send + Sync> Client<T> {
 
         match response {
             JSONRPCMessage::Response(resp) => {
-                // Extract the tool result from the response
-                let result_value = resp.result;
-                let result = result_value.get("result").ok_or_else(|| {
-                    MCPError::Protocol("Missing 'result' field in response".to_string())
-                })?;
-
                 // Parse the result
-                serde_json::from_value(result.clone()).map_err(MCPError::Serialization)
+                serde_json::from_value(resp.result).map_err(MCPError::Serialization)
             }
             JSONRPCMessage::Error(err) => {
                 Err(MCPError::Protocol(format!("Tool call failed: {:?}", err)))
