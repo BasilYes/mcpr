@@ -24,12 +24,16 @@ impl Default for StdioTransport {
 impl StdioTransport {
     /// Create a new stdio transport using stdin and stdout
     pub fn new() -> Self {
+        StdioTransport::with_writer(Box::new(tokio::io::stdout()))
+    }
+
+    pub fn with_writer(writer: Box<dyn tokio::io::AsyncWrite + Send + Sync + Unpin>) -> Self {
         // Create a channel for synchronized writing
         let (writer_tx, mut writer_rx) = mpsc::channel::<String>(32);
 
         // Spawn a dedicated writer task that processes one message at a time
         tokio::spawn(async move {
-            let mut writer = tokio::io::BufWriter::new(tokio::io::stdout());
+            let mut writer = tokio::io::BufWriter::new(writer);
             while let Some(message) = writer_rx.recv().await {
                 if let Err(e) = writer.write_all(message.as_bytes()).await {
                     eprintln!("Error writing to stdout: {}", e);
@@ -56,6 +60,15 @@ impl StdioTransport {
     /// Create a new stdio transport with custom reader and writer
     pub fn with_reader(reader: Box<dyn tokio::io::AsyncRead + Send + Sync + Unpin>) -> Self {
         let mut transport = Self::new();
+        transport.reader = BufReader::new(reader);
+        transport
+    }
+
+    pub fn with_reader_and_writer(
+        reader: Box<dyn tokio::io::AsyncRead + Send + Sync + Unpin>,
+        writer: Box<dyn tokio::io::AsyncWrite + Send + Sync + Unpin>,
+    ) -> Self {
+        let mut transport = Self::with_writer(writer);
         transport.reader = BufReader::new(reader);
         transport
     }
