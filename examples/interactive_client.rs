@@ -3,7 +3,7 @@ use mcpr::{client::Client, error::MCPError, transport::stdio::StdioTransport};
 use serde_json::Value;
 use std::{io::Write, process::Stdio};
 use tokio::{
-    io::{AsyncBufReadExt, BufReader, DuplexStream},
+    io::{AsyncBufReadExt, BufReader},
     process::Command,
     sync::mpsc,
     time::sleep,
