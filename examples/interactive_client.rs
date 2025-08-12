@@ -1,10 +1,12 @@
 use log::{error, info};
 use mcpr::{client::Client, error::MCPError, transport::stdio::StdioTransport};
 use serde_json::Value;
-use std::io::Write;
+use std::{io::Write, process::Stdio};
 use tokio::{
     io::{AsyncBufReadExt, BufReader},
+    process::Command,
     sync::mpsc,
+    time::sleep,
 };
 
 #[tokio::main]
@@ -14,8 +16,43 @@ async fn main() -> Result<(), MCPError> {
         env_logger::Env::default().filter_or(env_logger::DEFAULT_FILTER_ENV, "info"),
     );
 
+    let mut server_cmd = String::new();
+
+    println!("Enter server executable path:");
+    print!("> ");
+    std::io::stdout().flush().unwrap();
+    match BufReader::new(tokio::io::stdin())
+        .read_line(&mut server_cmd)
+        .await
+    {
+        Ok(0) => return Err(MCPError::Transport("Executable path is empty".to_string())), // EOF
+        Ok(_) => {
+            server_cmd = server_cmd.trim().to_string();
+        }
+        Err(e) => {
+            eprintln!("Error reading from stdin: {}", e);
+        }
+    }
+    // Start the server process
+    let mut server_process = Command::new(server_cmd)
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .map_err(|e| MCPError::Transport(format!("Failed to start server: {}", e)))?;
+
+    sleep(tokio::time::Duration::from_millis(500)).await;
+
+    let server_stdin = server_process.stdin.take().ok_or(MCPError::Transport(
+        "Failed to connect to new process stdin".to_string(),
+    ))?;
+    let server_stdout = server_process.stdout.take().ok_or(MCPError::Transport(
+        "Failed to connect to new process stdout".to_string(),
+    ))?;
+
     // Create a transport
-    let transport = StdioTransport::new();
+    let transport =
+        StdioTransport::with_reader_and_writer(Box::new(server_stdout), Box::new(server_stdin));
 
     // Create a client
     let mut client = Client::new(transport);
@@ -24,7 +61,7 @@ async fn main() -> Result<(), MCPError> {
     info!("Initializing client...");
     let init_result = client.initialize().await?;
 
-    info!("Connection established");
+    info!("Connection established {}", init_result);
 
     // Get server information
     if let Some(server_info) = init_result.get("serverInfo") {
@@ -41,7 +78,7 @@ async fn main() -> Result<(), MCPError> {
     }
 
     // Retrieve available tools
-    let tools_result = client.call_tool::<_, Value>("tools/list", &()).await?;
+    let tools_result = client.list_tools::<Value>().await?;
     let tools = tools_result
         .get("tools")
         .and_then(|t| t.as_array())
@@ -86,6 +123,8 @@ async fn main() -> Result<(), MCPError> {
                 Ok(_) => {
                     if let Err(_) = input_tx.send(buffer.trim().to_string()).await {
                         break;
+                    } else {
+                        tokio::time::sleep(tokio::time::Duration::from_millis(100)).await;
                     }
                 }
                 Err(e) => {
